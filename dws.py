@@ -1,5 +1,5 @@
-dws_finance_futu_au_assets_assets_daily_df_sql="""
-CREATE TABLE dws.finance.futu_au.assets.assets_daily_df(
+finance_assets_futu_au_assets_assets_daily_df_sql="""
+CREATE TABLE dws.finance_assets_futu_au_assets_assets_daily_df(
     date string    COMMENT '日期;取自user_assets_detail_daily表对应字段' ,
     assets_g0_user bigint(20)    COMMENT '总有资产客户数;count(distinct user_id) where total_assets>0' ,
     assets_g0_user_new bigint(20)    COMMENT '新增有资产客户数;count(distinct user_id) where total_assets>0 and assets_g0_lifecycle='new'' ,
@@ -16,8 +16,8 @@ CREATE TABLE dws.finance.futu_au.assets.assets_daily_df(
 )  COMMENT = '每日资产用户数';
 """
 
-dws_finance_futu_au_assets_indicator_statis_m2d_df_sql="""
-CREATE TABLE dws.finance.futu_au.assets_indicator_statis_m2d_df(
+finance_assets_futu_au_assets_indicator_statis_m2d_df_sql="""
+CREATE TABLE dws.finance_assets_futu_au_assets_indicator_statis_m2d_df(
     date string    COMMENT '日期;若无特殊说明，均取自assets.assets_daily_df表对应字段，取pt_date的自然月' ,
     total_assets_g0_user_new_m bigint(20)    COMMENT '当日月累计新增有资产客户数;sum(assets_g0_user_new)' ,
     total_assets_g0_user_net_m bigint(20)    COMMENT '当日月累计净增有资产客户数;sum(assets_g0_user_net)' ,
@@ -33,8 +33,8 @@ CREATE TABLE dws.finance.futu_au.assets_indicator_statis_m2d_df(
 )  COMMENT = '每日当月累计资产用户数';
 """
 
-dws_finance_futu_au_assets_indicator_statis_q2d_df_sql="""
-CREATE TABLE dws.finance.futu_au.assets_indicator_statis_q2d_df(
+finance_assets_futu_au_assets_indicator_statis_q2d_df_sql="""
+CREATE TABLE dws.finance_assets_futu_au_assets_indicator_statis_q2d_df(
     date string    COMMENT '日期;若无特殊说明，均取自assets.assets_daily_df表对应字段，取pt_date的自然季度' ,
     total_assets_g0_user_new_q bigint(20)    COMMENT '当日季累计新增有资产客户数;sum(assets_g0_user_new)' ,
     total_assets_g0_user_net_q bigint(20)    COMMENT '当日季累计净增有资产客户数;sum(assets_g0_user_net)' ,
@@ -51,8 +51,8 @@ CREATE TABLE dws.finance.futu_au.assets_indicator_statis_q2d_df(
 """
 
 
-finance_assets_futu_au_assets_daily_sql="""
-insert overwrite table dws.finance_assets_futu_au_assets_daily partition(pt_date) --日期+用户数 --insert overwrite是删除原有数据然后新增数据，如果有分区那么只会删除指定分区数据，其他分区数据不受影响。本质是覆盖数据
+finance_assets_futu_au_assets_daily_df_sql="""
+insert overwrite table dws.finance_assets_futu_au_assets_daily_df partition(pt_date) --日期+用户数 --insert overwrite是删除原有数据然后新增数据，如果有分区那么只会删除指定分区数据，其他分区数据不受影响。本质是覆盖数据
 select *
 from(
     select  total_assets_g0_user,
@@ -61,17 +61,39 @@ from(
             total_assets_g0_user_loss,
             total_assets_g0_user_keep,
             (total_assets_g0_user - lag(total_assets_g0_user,1,0) over(order by pt_date)) total_assets_g0_user_net,  --窗口函数
-            pt_date
+            pt_date,
+            kpi_channel,
+            kpi_subchannel,
+            reg_channel,
+            reg_subchannel,
+            reg_channel_name,
+            reg_subchannel_name,
     from(
         select  count(if (total_assets>0,1,null)) total_assets_g0_user,
                 count(if (assets_g0_lifecycle='new',1,null)) total_assets_g0_user_new,
                 count(if (assets_g0_lifecycle='back',1,null)) total_assets_g0_user_back,
                 count(if (assets_g0_lifecycle='loss',1,null)) total_assets_g0_user_loss,
                 count(if (assets_g0_lifecycle='keep',1,null)) total_assets_g0_user_keep,
-                pt_date
-        from   dws.finance_assets_futu_au_user_assets_detail_daily    --日期+资产+用户
-        where  pt_date between '{start_date}' and '{end_date}'  --昨天和今天的数据
-        group by pt_date
+                pt_date,
+                kpi_channel,
+                kpi_subchannel,
+                reg_channel,
+                reg_subchannel,
+                reg_channel_name,
+                reg_subchannel_name,             
+        from(
+            select  c1.*,
+                    c2.kpi_channel,
+                    c2.kpi_subchannel,
+                    c2.reg_channel,
+                    c2.reg_subchannel,
+                    c2.reg_channel_name,
+                    c2.reg_subchannel_name,                 
+            from   dws.finance_assets_futu_au_user_assets_detail_daily c1     --日期+资产+用户     
+            left join  dim.public_public_futu_au_user_channel_fact_df c2 on c1.user_id=c2.user_id 
+            where  pt_date between '{start_date}' and '{end_date}'
+        )c
+        group by pt_date,kpi_channel,kpi_subchannel,reg_channel,reg_channel_name,reg_subchannel_name
     )b
 )a
 where pt_date='{end_date}'
@@ -80,9 +102,9 @@ where pt_date='{end_date}'
 # trunc('yyyy-MM-dd','MM')  :当月第一天
 # last_day('yyyy-MM-dd','MM')  :当月最后一天
 # trunc('yyyy-MM-dd','Q'): 当前季度第一天
-finance_assets_futu_au_assets_month_d_sql="""
-insert overwrite table dws.finance_assets_futu_au_assets_month_d partition(pt_date)
-select  sum(total_assets_g0_user_new)   total_assets_g0_user_new,     --为什么还要sum一次
+finance_assets_futu_au_assets_indicator_statis_m2d_df_sql="""
+insert overwrite table dws.finance_assets_futu_au_assets_indicator_statis_m2d_df partition(pt_date)
+select  sum(total_assets_g0_user_new)   total_assets_g0_user_new,           --为什么还要sum一次
         sum(total_assets_g0_user_net)   total_assets_g0_user_net,
         sum(total_assets_g0_user_loss_m)    total_assets_g0_user_loss_m,
         sum(total_assets_g0_user_keep_m)    total_assets_g0_user_keep_m,
@@ -94,7 +116,7 @@ from(
             0   total_assets_g0_user_loss_m,
             0   total_assets_g0_user_keep_m,
             0   total_assets_g0_user_back_m
-    from  dws.finance_assets_futu_au_assets_daily
+    from  dws.finance_assets_futu_au_assets_daily_df
     -- 当月第一天开始累计计算新增等
     where  pt_date > date_add(trunc('{pt_date}','MM'),-1) and pt_date <= '{pt_date}'
     union all
